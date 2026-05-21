@@ -9,6 +9,11 @@ Produces:
 """
 
 import os, sys
+# Force UTF-8 output on Windows consoles
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
@@ -126,39 +131,57 @@ def main():
 
     for model_name, model_id in MODEL_CONFIGS.items():
         print(f"\n{'='*60}")
-        print(f"Loading model: {model_name}  ({model_id})")
-        model, tokenizer = load_model_and_tokenizer(model_id, DEVICE)
-        embeddings = get_embedding_matrix(model, DEVICE)
-        vocab_size = embeddings.shape[0]
 
-        # Median-heuristic bandwidth for kernel score (once per model)
-        print("  Computing kernel bandwidth (median heuristic)…")
-        sigma = compute_kernel_bandwidth(embeddings, KERNEL_N_SUBSAMPLE)
-        print(f"  σ = {sigma:.4f}")
+        # Check if all corpora already cached for this model
+        all_cached = all(
+            os.path.exists(os.path.join(TOKEN_SCORE_DIR, f"{model_name}__{c}.npz"))
+            for c in CORPUS_CONFIGS
+        )
+
+        if all_cached:
+            print(f"Model: {model_name}  [all corpora cached, skipping model load]")
+            model = tokenizer = embeddings = sigma = None
+        else:
+            print(f"Loading model: {model_name}  ({model_id})")
+            model, tokenizer = load_model_and_tokenizer(model_id, DEVICE)
+            embeddings = get_embedding_matrix(model, DEVICE)
+            vocab_size = embeddings.shape[0]
+
+            # Median-heuristic bandwidth for kernel score (once per model)
+            print("  Computing kernel bandwidth (median heuristic)...")
+            sigma = compute_kernel_bandwidth(embeddings, KERNEL_N_SUBSAMPLE)
+            print(f"  sigma = {sigma:.4f}")
 
         for corpus_name, corpus_cfg in CORPUS_CONFIGS.items():
-            print(f"\n  Corpus: {corpus_name}")
-            texts = load_corpus(corpus_name, corpus_cfg)
-            print(f"  Loaded {len(texts)} documents.")
-
-            # Build frequency ranks from the corpus (first pass over token ids)
-            print("  Building token frequency ranks…")
-            all_ids = collect_all_token_ids(
-                texts, tokenizer, MAX_SEQ_LEN, MAX_TOKENS)
-            freq_rank, sorted_by_freq = build_frequency_rank(all_ids, vocab_size)
-
-            # Main evaluation pass
-            label = f"{model_name}/{corpus_name}"
-            scores = evaluate(
-                model, tokenizer, embeddings, texts,
-                freq_rank, sorted_by_freq, sigma,
-                DEVICE, MAX_TOKENS, CHUNK_SIZE, MC_SAMPLES, label=label,
-            )
-
-            # Persist per-token arrays for downstream experiments
             tag = f"{model_name}__{corpus_name}"
-            np.savez_compressed(
-                os.path.join(TOKEN_SCORE_DIR, f"{tag}.npz"), **scores)
+            cache_path = os.path.join(TOKEN_SCORE_DIR, f"{tag}.npz")
+
+            # Resume: skip if already computed
+            if os.path.exists(cache_path):
+                print(f"\n  Corpus: {corpus_name}  [cached, loading from disk]")
+                data = np.load(cache_path)
+                scores = {r: data[r] for r in RULE_NAMES}
+            else:
+                print(f"\n  Corpus: {corpus_name}")
+                texts = load_corpus(corpus_name, corpus_cfg)
+                print(f"  Loaded {len(texts)} documents.")
+
+                # Build frequency ranks (first pass over token ids)
+                print("  Building token frequency ranks...")
+                all_ids = collect_all_token_ids(
+                    texts, tokenizer, MAX_SEQ_LEN, MAX_TOKENS)
+                freq_rank, sorted_by_freq = build_frequency_rank(all_ids, vocab_size)
+
+                # Main evaluation pass
+                label = f"{model_name}/{corpus_name}"
+                scores = evaluate(
+                    model, tokenizer, embeddings, texts,
+                    freq_rank, sorted_by_freq, sigma,
+                    DEVICE, MAX_TOKENS, CHUNK_SIZE, MC_SAMPLES, label=label,
+                )
+
+                # Persist per-token arrays for downstream experiments
+                np.savez_compressed(cache_path, **scores)
 
             mean_scores[(model_name, corpus_name)] = {
                 r: float(np.mean(v)) for r, v in scores.items()
@@ -247,7 +270,7 @@ def main():
     pivot = df_rankings.pivot_table(
         index=["corpus", "rule"], columns="model", values="rank", aggfunc="first")
     print(pivot.to_string())
-    print("\nPairwise Kendall τ between rules (token level):")
+    print("\nPairwise Kendall tau between rules (token level):")
     print(df_tau.to_string(index=False))
 
     print(f"\nResults saved to {RESULTS_DIR}/")

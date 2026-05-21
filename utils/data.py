@@ -16,8 +16,7 @@ def load_corpus(corpus_name: str, cfg: Dict) -> List[str]:
         return texts
 
     elif corpus_name == "pile":
-        ds = load_dataset(cfg["path"], split=cfg["split"], streaming=True,
-                          trust_remote_code=True)
+        ds = load_dataset(cfg["path"], split=cfg["split"], streaming=True)
         texts = [row[cfg["text_field"]]
                  for row in itertools.islice(ds, cfg["max_docs"])
                  if row[cfg["text_field"]].strip()]

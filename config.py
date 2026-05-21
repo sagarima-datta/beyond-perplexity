@@ -22,7 +22,7 @@ CORPUS_CONFIGS = {
 }
 
 # ── evaluation ──────────────────────────────────────────────────────────────
-MAX_TOKENS      = 50_000   # token positions evaluated per (model, corpus)
+MAX_TOKENS      = 5_000    # token positions evaluated per (model, corpus)  [set 50_000 for full run]
 MAX_SEQ_LEN     = 512      # context window / truncation length
 CHUNK_SIZE      = 256      # token-positions processed at once for CRPS memory
 DEVICE          = "cuda" if torch.cuda.is_available() else "cpu"
