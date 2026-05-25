@@ -38,34 +38,37 @@ def crps_chunk(
     probs: torch.Tensor,
     targets: torch.Tensor,
     freq_rank: torch.Tensor,       # (V,)  token_id → frequency rank (0 = most frequent)
-    sorted_indices: torch.Tensor,  # (V,)  argsort of tokens by frequency
+    sorted_indices: torch.Tensor,  # (V,)  unused — kept for API compatibility
+    n_samples: int = 200,
 ) -> np.ndarray:
     """
-    Adapted CRPS for a discrete distribution ordered by unigram frequency rank.
+    Adapted CRPS for a discrete distribution ordered by unigram frequency rank,
+    estimated via the equivalent energy/expectation representation:
 
-    CRPS(P, y) = Σ_t (F_P(t) − 𝟏{rank(y) ≤ t})²
+        CRPS(P, y) = E_{X~P}[|r(X) − r(y)|] − ½ E_{X,X'~P}[|r(X) − r(X')|]
 
-    where F_P is the CDF of P over the frequency-ranked vocabulary.
-    Associated divergence: Cramér–von Mises distance.
+    where r(v) is the frequency rank of token v (0 = most frequent).
+
+    This is mathematically identical to the CDF formulation but avoids
+    materialising the full (N, V) CDF matrix — O(N · n_samples) instead of
+    O(N · V).  Associated divergence: Cramér–von Mises distance.
     """
-    N, V = probs.shape
-    device = probs.device
+    # Sample two independent sets of tokens from each row's distribution
+    s1 = torch.multinomial(probs, n_samples, replacement=True)   # (N, n_samples)
+    s2 = torch.multinomial(probs, n_samples, replacement=True)
 
-    # Reorder columns by frequency rank (most frequent first)
-    probs_sorted = probs[:, sorted_indices]          # (N, V)
+    # Convert sampled token IDs to frequency ranks
+    r1 = freq_rank[s1].float()                        # (N, n_samples)
+    r2 = freq_rank[s2].float()
+    ry = freq_rank[targets].float().unsqueeze(1)      # (N, 1)
 
-    # CDF along the frequency-ranked axis
-    cdf = probs_sorted.cumsum(dim=-1)                # (N, V)
+    # E[|r(X) - r(y)|]
+    term1 = (r1 - ry).abs().mean(dim=-1)              # (N,)
 
-    # Rank of each target token
-    target_ranks = freq_rank[targets].long()         # (N,)
+    # E[|r(X) - r(X')|]  via paired samples
+    term2 = (r1 - r2).abs().mean(dim=-1)              # (N,)
 
-    # Indicator: indicator[i, t] = 1  iff  t >= target_rank[i]
-    t_idx = torch.arange(V, device=device).unsqueeze(0)   # (1, V)
-    indicator = (t_idx >= target_ranks.unsqueeze(1)).float()  # (N, V)
-
-    crps = ((cdf - indicator) ** 2).sum(dim=-1)      # (N,)
-    return crps.cpu().numpy()
+    return (term1 - 0.5 * term2).cpu().numpy()
 
 
 # ── 4. Energy score ──────────────────────────────────────────────────────────
@@ -133,6 +136,56 @@ def kernel_score_chunk(
     # k(y,y) = 1 for Gaussian kernel
 
     return (1.0 - 2.0 * k_xy + k_xx).cpu().numpy()
+
+
+# ── 6. CRPS-context (cosine-similarity ordering, expectation formulation) ──────
+
+def crps_context_chunk(
+    probs: torch.Tensor,
+    targets: torch.Tensor,
+    hidden_states: torch.Tensor,  # (N, d_model) — last transformer hidden state
+    embeddings: torch.Tensor,     # (V, d_model) — vocabulary embedding matrix
+    n_samples: int = 200,
+) -> np.ndarray:
+    """
+    CRPS where the vocabulary is ordered by cosine similarity between the
+    context hidden state h_t and each token embedding e_v, estimated via
+    the equivalent energy/expectation representation:
+
+        CRPS_context(P, y) = E_{X~P}[|cos(h,e_X) - cos(h,e_y)|]
+                           - 0.5 * E_{X,X'~P}[|cos(h,e_X) - cos(h,e_X')|]
+
+    Cosine similarity plays the role that frequency rank played in CRPS:
+    it is the 1-D "position" of each token in the context-ordered space.
+
+    This avoids materialising the full (N, V) cosine-similarity matrix,
+    making chunking unnecessary — O(N · n_samples · d) only.
+    """
+    import torch.nn.functional as F
+
+    # Sample two independent draws from each row's distribution
+    s1 = torch.multinomial(probs, n_samples, replacement=True)   # (N, n_samples)
+    s2 = torch.multinomial(probs, n_samples, replacement=True)
+
+    # Normalise hidden states and embeddings once
+    h_norm = F.normalize(hidden_states.float(), dim=-1)           # (N, d)
+    e_norm = F.normalize(embeddings.float(), dim=-1)              # (V, d)
+
+    # Cosine similarity of each context to sampled tokens
+    # e_norm[s1]: (N, n_samples, d)  →  dot with h_norm[i]: (N, 1, d)
+    cos_s1 = (h_norm.unsqueeze(1) * e_norm[s1]).sum(-1)          # (N, n_samples)
+    cos_s2 = (h_norm.unsqueeze(1) * e_norm[s2]).sum(-1)          # (N, n_samples)
+
+    # Cosine similarity to the correct target token
+    cos_y = (h_norm * e_norm[targets]).sum(-1, keepdim=True)     # (N, 1)
+
+    # E[|cos(h, X) - cos(h, y)|]
+    term1 = (cos_s1 - cos_y).abs().mean(dim=-1)                  # (N,)
+
+    # E[|cos(h, X) - cos(h, X')|]  via paired samples
+    term2 = (cos_s1 - cos_s2).abs().mean(dim=-1)                 # (N,)
+
+    return (term1 - 0.5 * term2).cpu().numpy()
 
 
 # ── Utility: median-heuristic bandwidth ─────────────────────────────────────

@@ -42,7 +42,7 @@ from tqdm import tqdm
 
 from config import (
     MODEL_CONFIGS, CORPUS_CONFIGS,
-    MAX_TOKENS, MAX_SEQ_LEN, CHUNK_SIZE, DEVICE, RESULTS_DIR,
+    MAX_TOKENS, MAX_SEQ_LEN, DEVICE, RESULTS_DIR,
 )
 from utils.data import load_corpus
 from utils.models import load_model_and_tokenizer
@@ -61,7 +61,7 @@ MODEL_COLORS = {
 # ── entropy collection ────────────────────────────────────────────────────────
 
 def collect_entropy(model, tokenizer, texts, device,
-                    max_tokens, max_seq_len, chunk_size) -> np.ndarray:
+                    max_tokens, max_seq_len) -> np.ndarray:
     """
     One forward pass per document — compute H(p) = -sum_k p_k log p_k (nats)
     at every evaluated token position, in the same order as exp1's evaluate().
@@ -86,17 +86,16 @@ def collect_entropy(model, tokenizer, texts, device,
                 continue
 
             logits = model(**enc).logits[0, :-1, :]   # (T-1, V)
-            T = logits.shape[0]
 
-            for start in range(0, T, chunk_size):
-                if tokens_processed >= max_tokens:
-                    break
-                end   = min(start + chunk_size, T)
-                probs = torch.softmax(logits[start:end], dim=-1)   # (c, V)
-                lp    = torch.log(probs.clamp(min=1e-40))
-                H     = -(probs * lp).sum(dim=-1)                  # (c,)
-                entropies.append(H.cpu().numpy())
-                tokens_processed += end - start
+            # Trim to remaining token budget
+            remaining = max_tokens - tokens_processed
+            logits = logits[:remaining]
+
+            probs = torch.softmax(logits, dim=-1)      # (T', V)
+            lp    = torch.log(probs.clamp(min=1e-40))
+            H     = -(probs * lp).sum(dim=-1)          # (T',)
+            entropies.append(H.cpu().numpy())
+            tokens_processed += logits.shape[0]
 
     return np.concatenate(entropies)
 
@@ -113,59 +112,51 @@ def tertile_bins(entropy: np.ndarray):
 
 # ── plotting ──────────────────────────────────────────────────────────────────
 
-def plot_corpus(corpus_name, df_bins, df_ratio, model_names):
+def plot_corpus(corpus_name, df_bins, model_names):
     """
-    6 panels:
-      0-4  — mean score per entropy bin for each of the 5 rules
-      5    — log/energy and log/kernel score ratios (key diagnostic)
+    Single panel: relative score vs lowest-entropy bin, per rule.
+    Each line is  score(bin) / score("low")  averaged across models.
+    Values > 1 mean the score worsened relative to the low-entropy baseline.
+    Mirrors Exp 2's style (relative to most common decile).
     """
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
-    flat = axes.flatten()
-    x    = np.arange(len(BIN_LABELS))
+    fig, ax = plt.subplots(figsize=(9, 5))
+    x = np.arange(len(BIN_LABELS))
 
-    sub_bins  = df_bins[df_bins["corpus"]  == corpus_name]
-    sub_ratio = df_ratio[df_ratio["corpus"] == corpus_name]
+    sub = df_bins[df_bins["corpus"] == corpus_name]
 
-    for idx, rule in enumerate(RULE_NAMES):
-        ax = flat[idx]
-        for model in model_names:
-            vals = (sub_bins[(sub_bins["model"] == model) &
-                             (sub_bins["rule"]  == rule)]
-                    .set_index("bin")
-                    .reindex(BIN_LABELS)["mean_score"]
-                    .values)
-            ax.plot(x, vals, marker="o", label=model,
-                    color=MODEL_COLORS[model])
-        ax.set_xticks(x); ax.set_xticklabels(BIN_LABELS)
-        ax.set_title(rule, fontweight="bold")
-        ax.set_xlabel("Entropy bin")
-        ax.set_ylabel("Mean score (lower = better)")
-        ax.legend(fontsize=8)
+    rule_styles = {
+        "log":       ("-",  "o",  "#e41a1c"),
+        "quadratic": ("--", "s",  "#377eb8"),
+        "crps":      (":",  "^",  "#4daf4a"),
+        "energy":    ("-.", "D",  "#ff7f00"),
+        "kernel":    ((0,(3,1,1,1)), "v", "#984ea3"),
+    }
 
-    # Panel 5: log / energy and log / kernel ratios
-    ax6 = flat[5]
-    for model in model_names:
-        for ratio_col, ls, marker in [
-                ("log_over_energy", "-",  "o"),
-                ("log_over_kernel", "--", "s")]:
-            vals = (sub_ratio[(sub_ratio["model"] == model)]
-                    .set_index("bin")
-                    .reindex(BIN_LABELS)[ratio_col]
-                    .values)
-            ax6.plot(x, vals, linestyle=ls, marker=marker,
-                     color=MODEL_COLORS[model],
-                     label=f"{model} / {ratio_col.replace('log_over_', '')}",
-                     linewidth=1.5, markersize=5)
-    ax6.axhline(1.0, color="k", linewidth=0.8, linestyle=":")
-    ax6.set_xticks(x); ax6.set_xticklabels(BIN_LABELS)
-    ax6.set_title("Log / (Energy | Kernel) ratio", fontweight="bold")
-    ax6.set_xlabel("Entropy bin")
-    ax6.set_ylabel("Ratio (> 1 means log penalises more)")
-    ax6.legend(fontsize=6, ncol=2)
+    for rule in RULE_NAMES:
+        mean_per_bin = (
+            sub[sub["rule"] == rule]
+            .groupby("bin")["mean_score"]
+            .mean()
+            .reindex(BIN_LABELS)
+            .values.astype(float)
+        )
+        base = mean_per_bin[0]          # "low" entropy bin
+        if np.isnan(base) or base == 0:
+            continue
+        rel = mean_per_bin / base
+        ls, mk, col = rule_styles[rule]
+        ax.plot(x, rel, linestyle=ls, marker=mk, color=col,
+                label=rule, linewidth=1.8, markersize=6)
 
-    fig.suptitle(
-        f"Experiment 3 — Score by prediction entropy  [{corpus_name}]",
-        fontsize=14)
+    ax.axhline(1.0, color="k", linewidth=0.8, linestyle=":")
+    ax.set_xticks(x)
+    ax.set_xticklabels(BIN_LABELS, fontsize=11)
+    ax.set_xlabel("Entropy bin  (low → high prediction uncertainty)", fontsize=11)
+    ax.set_ylabel("Relative score  (1 = same as low-entropy bin)", fontsize=11)
+    ax.set_title(
+        f"Exp 3 — Relative score by prediction entropy  [{corpus_name}]",
+        fontsize=12)
+    ax.legend(fontsize=9)
     plt.tight_layout()
     return fig
 
@@ -174,8 +165,7 @@ def plot_corpus(corpus_name, df_bins, df_ratio, model_names):
 
 def main():
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    bin_records   = []
-    ratio_records = []
+    bin_records = []
 
     for model_name, model_id in MODEL_CONFIGS.items():
         print(f"\n{'='*60}")
@@ -221,7 +211,7 @@ def main():
                 print(f"    Loaded {len(texts)} documents.")
                 entropy = collect_entropy(
                     model, tokenizer, texts, DEVICE,
-                    MAX_TOKENS, MAX_SEQ_LEN, CHUNK_SIZE)
+                    MAX_TOKENS, MAX_SEQ_LEN)
                 np.save(entropy_cache, entropy)
                 print(f"    Entropy cached ({len(entropy)} positions).")
 
@@ -253,25 +243,6 @@ def main():
                                          if n_b > 0 else np.nan
                 bin_records.append(row)
 
-                # Also store in long format for plotting
-                for rule in RULE_NAMES:
-                    ratio_records  # placeholder; built below
-
-            # Log / energy and log / kernel ratios per bin
-            for b in BIN_LABELS:
-                mask   = bin_labels == b
-                if mask.sum() == 0:
-                    continue
-                mean_log    = scores["log"][mask].mean()
-                mean_energy = scores["energy"][mask].mean()
-                mean_kernel = scores["kernel"][mask].mean()
-                ratio_records.append({
-                    "model":           model_name,
-                    "corpus":          corpus_name,
-                    "bin":             b,
-                    "log_over_energy": mean_log / (mean_energy + 1e-12),
-                    "log_over_kernel": mean_log / (mean_kernel + 1e-12),
-                })
 
             print(f"    Bin counts: "
                   f"low={( bin_labels=='low').sum()}, "
@@ -297,27 +268,31 @@ def main():
                            var_name="rule", value_name="mean_score")
     df_long["rule"] = df_long["rule"].str.replace("mean_", "")
 
-    df_ratio = pd.DataFrame(ratio_records)
-
     # Save
     df_long.to_csv(os.path.join(RESULTS_DIR, "exp3_entropy_bins.csv"),
                    index=False)
-    df_ratio.to_csv(os.path.join(RESULTS_DIR, "exp3_ratio.csv"),
-                    index=False)
-    print(f"\nSaved CSVs to {RESULTS_DIR}/")
+    print(f"\nSaved CSV to {RESULTS_DIR}/")
 
-    # ── Print summary ─────────────────────────────────────────────────────────
-    print("\nLog/energy ratio by entropy bin (averaged across models):")
-    summary = (df_ratio.groupby(["corpus", "bin"])[["log_over_energy",
-                                                     "log_over_kernel"]]
-               .mean()
-               .reindex(BIN_LABELS, level="bin"))
-    print(summary.to_string())
+    # ── Print low → high relative comparison ─────────────────────────────────
+    print("\nRelative change low → high entropy (averaged across models):")
+    for corpus_name in CORPUS_CONFIGS:
+        sub = df_long[df_long["corpus"] == corpus_name]
+        print(f"\n  {corpus_name}:")
+        for rule in RULE_NAMES:
+            grp = (sub[sub["rule"] == rule]
+                   .groupby("bin")["mean_score"]
+                   .mean()
+                   .reindex(BIN_LABELS))
+            lo = grp["low"]
+            hi = grp["high"]
+            if lo > 0:
+                print(f"    {rule:10s}  low={lo:.4f}  high={hi:.4f}  "
+                      f"({hi/lo:.2f}x  +{(hi-lo)/lo*100:.1f}%)")
 
     # ── Plots ─────────────────────────────────────────────────────────────────
     model_names = list(MODEL_CONFIGS.keys())
     for corpus_name in CORPUS_CONFIGS:
-        fig = plot_corpus(corpus_name, df_long, df_ratio, model_names)
+        fig = plot_corpus(corpus_name, df_long, model_names)
         png = os.path.join(RESULTS_DIR, f"exp3_{corpus_name}.png")
         fig.savefig(png, dpi=150, bbox_inches="tight")
         plt.close(fig)

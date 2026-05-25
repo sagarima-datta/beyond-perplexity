@@ -1,0 +1,34 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env
+
+# NumPy binary caches — large, fully regeneratable by re-running experiments
+*.npy
+*.npz
+
+# Sample-mode results — development artifact, not part of the paper
+results_sample/
+
+# Results from experiments that no longer exist (kept out of tree)
+results/exp4_*
+results/exp5_*
+results/exp6_*
+results/exp7_*
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo

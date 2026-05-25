@@ -16,6 +16,20 @@ def load_model_and_tokenizer(model_id: str, device: str):
     return model, tokenizer
 
 
+def get_final_norm(model):
+    """
+    Return the final layer-norm module applied just before the LM head.
+    This must be applied to raw hidden states before cosine-similarity
+    comparisons — the raw residual stream has a very different direction
+    to what the LM head actually sees.
+    """
+    if hasattr(model, "transformer") and hasattr(model.transformer, "ln_f"):
+        return model.transformer.ln_f          # GPT-2
+    if hasattr(model, "model") and hasattr(model.model, "decoder"):
+        return model.model.decoder.final_layer_norm  # OPT
+    raise ValueError(f"Unknown architecture: {type(model)}")
+
+
 def get_embedding_matrix(model, device: str) -> torch.Tensor:
     """
     Return the input embedding matrix E of shape (vocab_size, d).

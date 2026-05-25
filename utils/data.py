@@ -13,13 +13,28 @@ def load_corpus(corpus_name: str, cfg: Dict) -> List[str]:
         ds = load_dataset(cfg["path"], cfg["name"], split=cfg["split"])
         texts = [row[cfg["text_field"]] for row in ds
                  if row[cfg["text_field"]].strip()]
+        if cfg.get("max_docs") is not None:
+            texts = texts[:cfg["max_docs"]]
+            print(f"Loaded {len(texts)} documents from {corpus_name} (max_docs={cfg['max_docs']})")
+        else:
+            print(f"Loaded {len(texts)} documents from {corpus_name}")
         return texts
 
-    elif corpus_name == "pile":
-        ds = load_dataset(cfg["path"], split=cfg["split"], streaming=True)
-        texts = [row[cfg["text_field"]]
-                 for row in itertools.islice(ds, cfg["max_docs"])
-                 if row[cfg["text_field"]].strip()]
+    elif corpus_name == "ptb":
+        # Penn Treebank 10% sample via NLTK (WSJ sections 0-24)
+        import nltk
+        try:
+            nltk.data.find("corpora/treebank")
+        except LookupError:
+            nltk.download("treebank", quiet=True)
+        from nltk.corpus import treebank
+        texts = [" ".join(sent) for sent in treebank.sents()
+                 if sent]
+        if cfg.get("max_docs") is not None:
+            texts = texts[:cfg["max_docs"]]
+            print(f"Loaded {len(texts)} sentences from PTB (max_docs={cfg['max_docs']})")
+        else:
+            print(f"Loaded {len(texts)} sentences from PTB")
         return texts
 
     else:

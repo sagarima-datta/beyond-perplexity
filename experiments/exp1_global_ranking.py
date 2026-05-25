@@ -25,7 +25,7 @@ from tqdm import tqdm
 
 from config import (
     MODEL_CONFIGS, CORPUS_CONFIGS, DEVICE,
-    MAX_TOKENS, MAX_SEQ_LEN, CHUNK_SIZE, MC_SAMPLES,
+    MAX_TOKENS, MAX_SEQ_LEN, MC_SAMPLES,
     KERNEL_N_SUBSAMPLE, RESULTS_DIR,
 )
 from utils.models import load_model_and_tokenizer, get_embedding_matrix
@@ -62,15 +62,18 @@ def collect_all_token_ids(texts, tokenizer, max_seq_len, max_tokens):
 
 def evaluate(model, tokenizer, embeddings, texts,
              freq_rank, sorted_by_freq, sigma,
-             device, max_tokens, chunk_size, n_samples, label=""):
+             device, max_tokens, n_samples, label=""):
     """
     Iterate over texts, run the model, and compute all 5 scores per token.
     Returns a dict: rule_name → np.ndarray of per-token scores.
+
+    All rules now use MC sampling — no (T × V) matrix is ever materialised,
+    so the full document can be scored in one shot without chunking.
     """
     all_scores = {r: [] for r in RULE_NAMES}
     tokens_processed = 0
 
-    freq_rank_dev    = freq_rank.to(device)
+    freq_rank_dev      = freq_rank.to(device)
     sorted_by_freq_dev = sorted_by_freq.to(device)
 
     pbar = tqdm(texts, desc=label, dynamic_ncols=True)
@@ -88,34 +91,28 @@ def evaluate(model, tokenizer, embeddings, texts,
                 continue
 
             outputs = model(**enc)
-            logits  = outputs.logits[0, :-1, :]   # (T-1, V)  — predict next token
+            logits  = outputs.logits[0, :-1, :]   # (T-1, V)
             targets = input_ids[0, 1:]             # (T-1,)
 
-            T = logits.shape[0]
+            # Trim to remaining token budget
+            remaining = max_tokens - tokens_processed
+            logits  = logits[:remaining]
+            targets = targets[:remaining]
 
-            # Process in chunks to limit memory for CRPS
-            for start in range(0, T, chunk_size):
-                if tokens_processed >= max_tokens:
-                    break
-                end = min(start + chunk_size, T)
+            probs = torch.softmax(logits, dim=-1)  # (T', V)
 
-                lg_chunk  = logits[start:end]      # (chunk, V)
-                tgt_chunk = targets[start:end]     # (chunk,)
-                probs     = torch.softmax(lg_chunk, dim=-1)
+            all_scores["log"].append(
+                log_score_chunk(probs, targets))
+            all_scores["quadratic"].append(
+                quadratic_score_chunk(probs, targets))
+            all_scores["crps"].append(
+                crps_chunk(probs, targets, freq_rank_dev, sorted_by_freq_dev, n_samples))
+            all_scores["energy"].append(
+                energy_score_chunk(probs, targets, embeddings, n_samples))
+            all_scores["kernel"].append(
+                kernel_score_chunk(probs, targets, embeddings, sigma, n_samples))
 
-                all_scores["log"].append(
-                    log_score_chunk(probs, tgt_chunk))
-                all_scores["quadratic"].append(
-                    quadratic_score_chunk(probs, tgt_chunk))
-                all_scores["crps"].append(
-                    crps_chunk(probs, tgt_chunk, freq_rank_dev, sorted_by_freq_dev))
-                all_scores["energy"].append(
-                    energy_score_chunk(probs, tgt_chunk, embeddings, n_samples))
-                all_scores["kernel"].append(
-                    kernel_score_chunk(probs, tgt_chunk, embeddings, sigma, n_samples))
-
-                tokens_processed += (end - start)
-
+            tokens_processed += logits.shape[0]
             pbar.set_postfix({"tokens": tokens_processed})
 
     return {r: np.concatenate(v) for r, v in all_scores.items() if v}
@@ -177,7 +174,7 @@ def main():
                 scores = evaluate(
                     model, tokenizer, embeddings, texts,
                     freq_rank, sorted_by_freq, sigma,
-                    DEVICE, MAX_TOKENS, CHUNK_SIZE, MC_SAMPLES, label=label,
+                    DEVICE, MAX_TOKENS, MC_SAMPLES, label=label,
                 )
 
                 # Persist per-token arrays for downstream experiments

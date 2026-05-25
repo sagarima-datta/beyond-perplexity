@@ -34,7 +34,7 @@ from tqdm import tqdm
 
 from config import (
     MODEL_CONFIGS, CORPUS_CONFIGS,
-    MAX_TOKENS, MAX_SEQ_LEN, CHUNK_SIZE, RESULTS_DIR,
+    MAX_TOKENS, MAX_SEQ_LEN, RESULTS_DIR,
 )
 from utils.data import load_corpus
 from transformers import AutoTokenizer
@@ -52,7 +52,7 @@ MODEL_COLORS = {
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def collect_target_ids(texts, tokenizer, max_seq_len, max_tokens, chunk_size):
+def collect_target_ids(texts, tokenizer, max_seq_len, max_tokens):
     """
     Replay the same tokenisation order as exp1's evaluate() without model
     inference, returning the exact sequence of target token IDs that were
@@ -74,14 +74,9 @@ def collect_target_ids(texts, tokenizer, max_seq_len, max_tokens, chunk_size):
             continue
 
         tgt = input_ids[1:].numpy().astype(np.int32)   # next-token targets
-        T = len(tgt)
-
-        for start in range(0, T, chunk_size):
-            if tokens_processed >= max_tokens:
-                break
-            end = min(start + chunk_size, T)
-            target_ids.append(tgt[start:end])
-            tokens_processed += end - start
+        remaining = max_tokens - tokens_processed
+        target_ids.append(tgt[:remaining])
+        tokens_processed += min(len(tgt), remaining)
 
     return np.concatenate(target_ids)
 
@@ -102,20 +97,28 @@ def build_vocab_counts(texts, tokenizer, max_seq_len, vocab_size):
 def frequency_decile_per_token(token_ids, vocab_counts, n_deciles=N_DECILES):
     """
     Map each token id to a frequency decile in [0, n_deciles-1].
-    Decile 0 = most frequent fraction of the vocabulary.
+    Decile 0 = most frequent fraction of the *observed* vocabulary.
 
-    Uses the *vocabulary-level* decile: tokens in the top 1/n_deciles by
-    frequency get decile 0, the next slice get decile 1, etc.
-    Tokens with count 0 are placed in the rarest decile.
+    Ranking is restricted to tokens that actually appear in the corpus
+    (vocab_counts > 0), so deciles are always well-populated regardless of
+    corpus size. Tokens unseen in the corpus get the rarest decile.
     """
-    V = len(vocab_counts)
-    # Rank: 0 = most frequent token id in vocabulary
-    sorted_by_freq = np.argsort(-vocab_counts)          # most frequent first
-    freq_rank = np.empty(V, dtype=np.int64)
-    freq_rank[sorted_by_freq] = np.arange(V)
+    # Restrict to tokens observed in this corpus
+    seen_mask = vocab_counts > 0
+    seen_ids = np.where(seen_mask)[0]                        # token ids that appear
+    n_seen = len(seen_ids)
 
-    ranks = freq_rank[token_ids]                        # rank of each evaluated token
-    deciles = (ranks * n_deciles // V).clip(0, n_deciles - 1)
+    if n_seen == 0:
+        return np.zeros(len(token_ids), dtype=np.int64)
+
+    # Rank within observed tokens: 0 = most frequent
+    seen_counts = vocab_counts[seen_ids]
+    order = np.argsort(-seen_counts)                         # descending frequency
+    freq_rank = np.full(len(vocab_counts), n_seen, dtype=np.int64)  # unseen → max rank
+    freq_rank[seen_ids[order]] = np.arange(n_seen)
+
+    ranks = freq_rank[token_ids]
+    deciles = (ranks * n_deciles // n_seen).clip(0, n_deciles - 1)
     return deciles
 
 
@@ -123,50 +126,48 @@ def frequency_decile_per_token(token_ids, vocab_counts, n_deciles=N_DECILES):
 
 def plot_corpus(corpus_name, stratified_df, model_names, rule_names):
     """
-    Two-row figure: one subplot per scoring rule (cols 0-4) plus a sixth panel
-    showing log vs energy normalised to [0,1] to highlight crossing behaviour.
+    Single panel: relative degradation vs decile 0 (most frequent).
+    Each line is score(decile d) / score(decile 0) for a given rule,
+    averaged across models.  Values > 1 mean the score worsened relative
+    to the most frequent tokens.
     """
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
-    axes_flat = axes.flatten()
-
+    fig, ax = plt.subplots(figsize=(9, 5))
     deciles = np.arange(N_DECILES)
     sub = stratified_df[stratified_df["corpus"] == corpus_name]
 
-    for idx, rule in enumerate(rule_names):
-        ax = axes_flat[idx]
-        for model in model_names:
-            row = sub[(sub["model"] == model) & (sub["rule"] == rule)]
-            row = row.sort_values("decile")
-            ax.plot(row["decile"], row["mean_score"],
-                    marker="o", label=model, color=MODEL_COLORS[model])
-        ax.set_title(rule, fontsize=12, fontweight="bold")
-        ax.set_xlabel("Frequency decile  (0 = most frequent)")
-        ax.set_ylabel("Mean score (lower = better)")
-        ax.set_xticks(deciles)
-        ax.legend(fontsize=8)
+    rule_styles = {
+        "log":       ("-",  "o",  "#e41a1c"),
+        "quadratic": ("--", "s",  "#377eb8"),
+        "crps":      (":",  "^",  "#4daf4a"),
+        "energy":    ("-.", "D",  "#ff7f00"),
+        "kernel":    ((0,(3,1,1,1)), "v", "#984ea3"),
+    }
 
-    # Panel 6: normalised log vs energy overlay (key diagnostic from proposal)
-    ax6 = axes_flat[5]
-    for model in model_names:
-        for rule, ls in [("log", "-"), ("energy", "--")]:
-            row = sub[(sub["model"] == model) & (sub["rule"] == rule)]
-            row = row.sort_values("decile")
-            s = row["mean_score"].values.astype(float)
-            s_norm = (s - s.min()) / (s.max() - s.min() + 1e-12)
-            ax6.plot(row["decile"].values, s_norm,
-                     linestyle=ls, marker="o" if rule == "log" else "s",
-                     color=MODEL_COLORS[model],
-                     label=f"{model}/{rule}", linewidth=1.4, markersize=4)
-    ax6.set_title("Log vs Energy  (normalised)", fontsize=12, fontweight="bold")
-    ax6.set_xlabel("Frequency decile  (0 = most frequent)")
-    ax6.set_ylabel("Normalised score")
-    ax6.set_xticks(deciles)
-    ax6.legend(fontsize=6, ncol=2)
+    for rule in rule_names:
+        # Average across models for each decile
+        mean_per_decile = (
+            sub[sub["rule"] == rule]
+            .groupby("decile")["mean_score"]
+            .mean()
+            .reindex(deciles)
+            .values.astype(float)
+        )
+        base = mean_per_decile[0]
+        if np.isnan(base) or base == 0:
+            continue
+        rel = mean_per_decile / base
+        ls, mk, col = rule_styles[rule]
+        ax.plot(deciles, rel, linestyle=ls, marker=mk, color=col,
+                label=rule, linewidth=1.8, markersize=5)
 
-    fig.suptitle(
-        f"Experiment 2 — Score by token frequency decile  [{corpus_name}]",
-        fontsize=14,
-    )
+    ax.axhline(1.0, color="k", linewidth=0.8, linestyle=":")
+    ax.set_xticks(deciles)
+    ax.set_xlabel("Frequency decile  (0 = most frequent tokens)", fontsize=11)
+    ax.set_ylabel("Relative score  (1 = same as decile 0)", fontsize=11)
+    ax.set_title(
+        f"Exp 2 — Relative score degradation by token frequency  [{corpus_name}]",
+        fontsize=12)
+    ax.legend(fontsize=9)
     plt.tight_layout()
     return fig
 
@@ -210,7 +211,7 @@ def main():
             # Replay tokenisation to get the same target ids as exp1
             print("    Replaying tokenisation to recover target IDs...")
             target_ids = collect_target_ids(
-                texts, tokenizer, MAX_SEQ_LEN, MAX_TOKENS, CHUNK_SIZE)
+                texts, tokenizer, MAX_SEQ_LEN, MAX_TOKENS)
 
             if len(target_ids) != n_tokens:
                 print(f"    [WARN] target count mismatch: "
@@ -244,10 +245,19 @@ def main():
     df.to_csv(csv_path, index=False)
     print(f"\nSaved stratified scores to {csv_path}")
 
-    # ── Print summary table ───────────────────────────────────────────────────
-    print("\nDecile breakdown (mean score, averaged across models):")
-    pivot = df.groupby(["corpus", "rule", "decile"])["mean_score"].mean().unstack("decile")
-    print(pivot.to_string())
+    # ── Print relative degradation: decile d vs decile 0 ─────────────────────
+    print("\nRelative degradation vs decile 0 (score_d / score_0, averaged across models):")
+    for corpus_name in CORPUS_CONFIGS:
+        print(f"\n  {corpus_name}:")
+        sub = df[df["corpus"] == corpus_name]
+        for rule in RULE_NAMES:
+            base = (sub[(sub["rule"] == rule) & (sub["decile"] == 0)]
+                    .groupby("model")["mean_score"].mean().mean())
+            last = (sub[(sub["rule"] == rule) & (sub["decile"] == N_DECILES - 1)]
+                    .groupby("model")["mean_score"].mean().mean())
+            if base > 0:
+                print(f"    {rule:10s}  decile 0 → {N_DECILES-1}: "
+                      f"{base:.4f} → {last:.4f}  ({last/base:.2f}x)")
 
     # ── Plots ─────────────────────────────────────────────────────────────────
     model_names = list(MODEL_CONFIGS.keys())
