@@ -3,7 +3,7 @@ Experiment 2: Score behavior by token frequency.
 
 Stratifies each evaluated token position by its unigram frequency decile
 (decile 0 = most frequent 10% of vocab, decile 9 = rarest 10%) and reports
-the mean score under each scoring rule per stratum.
+the mean score under each reported scoring rule per stratum.
 
 Expected patterns (from proposal):
   - Log-score   : sharp increase toward rare tokens  (KL divergence → ∞ as p→0)
@@ -15,7 +15,7 @@ Expected patterns (from proposal):
 Outputs
 -------
   results/exp2_stratified_scores.csv   — mean score per (model, corpus, decile, rule)
-  results/exp2_<corpus>.png            — per-corpus figure (5 rule panels + overlay)
+  results/exp2_<corpus>.png            — per-corpus figure over reported rules
 """
 
 import os, sys
@@ -42,6 +42,7 @@ from transformers import AutoTokenizer
 TOKEN_SCORE_DIR = os.path.join(RESULTS_DIR, "exp1_token_scores")
 N_DECILES = 10
 RULE_NAMES = ["log", "quadratic", "crps", "energy", "kernel"]
+REPORT_RULE_NAMES = [r for r in RULE_NAMES if r != "crps"]
 
 MODEL_COLORS = {
     "gpt2":        "#1f77b4",
@@ -229,7 +230,7 @@ def main():
             for decile in range(N_DECILES):
                 mask = decile_labels == decile
                 n_in_decile = mask.sum()
-                for rule in RULE_NAMES:
+                for rule in REPORT_RULE_NAMES:
                     mean_s = float(scores[rule][mask].mean()) if n_in_decile > 0 else np.nan
                     records.append({
                         "model":      model_name,
@@ -250,7 +251,7 @@ def main():
     for corpus_name in CORPUS_CONFIGS:
         print(f"\n  {corpus_name}:")
         sub = df[df["corpus"] == corpus_name]
-        for rule in RULE_NAMES:
+        for rule in REPORT_RULE_NAMES:
             base = (sub[(sub["rule"] == rule) & (sub["decile"] == 0)]
                     .groupby("model")["mean_score"].mean().mean())
             last = (sub[(sub["rule"] == rule) & (sub["decile"] == N_DECILES - 1)]
@@ -262,7 +263,7 @@ def main():
     # ── Plots ─────────────────────────────────────────────────────────────────
     model_names = list(MODEL_CONFIGS.keys())
     for corpus_name in CORPUS_CONFIGS:
-        fig = plot_corpus(corpus_name, df, model_names, RULE_NAMES)
+        fig = plot_corpus(corpus_name, df, model_names, REPORT_RULE_NAMES)
         png_path = os.path.join(RESULTS_DIR, f"exp2_{corpus_name}.png")
         fig.savefig(png_path, dpi=150, bbox_inches="tight")
         plt.close(fig)

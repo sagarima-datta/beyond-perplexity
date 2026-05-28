@@ -2,6 +2,8 @@
 
 Code for the STAT 591 paper. Evaluates GPT-2, GPT-2-Medium, and OPT-125M on WikiText-103 and Penn Treebank (PTB) using five strictly proper scoring rules: log-score, quadratic (Brier), CRPS, energy score, and kernel score (MMD).
 
+CRPS is still computed and cached, but it is excluded from reported tables and figures.
+
 ---
 
 ## Repository layout
@@ -18,7 +20,8 @@ beyond-perplexity/
 ├── experiments/
 │   ├── exp1_global_ranking.py   # Experiment 1 — global score comparison & model ranking
 │   ├── exp2_token_frequency.py  # Experiment 2 — scores by token frequency decile
-│   └── exp3_entropy_bins.py     # Experiment 3 — scores by prediction entropy
+│   ├── exp3_entropy_bins.py     # Experiment 3 — scores by prediction entropy
+│   └── exp4_bootstrap_intervals.py # Experiment 4 — bootstrap uncertainty for Exp 1 rankings
 ├── results/                     # All outputs land here (created automatically)
 │   ├── *.csv                    # Numeric results
 │   └── *.png                    # Plots
@@ -71,6 +74,8 @@ Outputs:
 - `results/exp1_scores.csv` — mean scores per (model, corpus, rule)
 - `results/exp1_rankings.csv` — model rank per (corpus, rule)
 - `results/exp1_kendall_tau.csv` — pairwise Kendall τ between all rule pairs
+- `results/exp1_kendall_tau_matrix_<corpus>.csv`
+- `results/exp1_kendall_tau_matrix_<corpus>.png`
 - `results/exp1_token_scores/<model>__<corpus>.npz` — per-token score cache (reused by Exp 2 & 3)
 
 ### Experiment 2 — Score behaviour by token frequency
@@ -103,6 +108,28 @@ Outputs:
 - `results/exp3_wikitext103.png`
 - `results/exp3_ptb.png`
 
+### Experiment 4 — Bootstrap uncertainty for Experiment 1 rankings
+
+> **Requires Experiment 1 to have been run first.**
+
+```bash
+python -m experiments.exp4_bootstrap_intervals
+```
+
+Resamples token positions within each `(model, corpus)` cell to quantify uncertainty in Experiment 1's mean scores and model rankings. It also bootstraps the per-token Kendall τ matrix between scoring rules.
+
+Outputs:
+- `results/exp4_bootstrap_cell_ci.csv`
+- `results/exp4_bootstrap_rank_agreement.csv`
+- `results/exp4_bootstrap_headline.csv`
+- `results/exp4_bootstrap_kendall_tau.csv`
+- `results/exp4_bootstrap_kendall_tau_mean_matrix_<corpus>.csv`
+- `results/exp4_bootstrap_kendall_tau_se_matrix_<corpus>.csv`
+- `results/exp4_score_ci_<corpus>.png`
+- `results/exp4_kendall_tau_bootstrap_<corpus>.png`
+
+To generate only the score/CI tables and plots, set `SKIP_EXP4_TAU=1`.
+
 ---
 
 ## Running all experiments in order
@@ -111,6 +138,7 @@ Outputs:
 python -m experiments.exp1_global_ranking
 python -m experiments.exp2_token_frequency
 python -m experiments.exp3_entropy_bins
+python -m experiments.exp4_bootstrap_intervals
 ```
 
 Each experiment checks for cached results and skips model inference if already computed. Re-running is safe and fast after the first pass.
@@ -169,5 +197,6 @@ rm results/exp1_token_scores/gpt2__*.npz
 | Exp 1 (all 3 models × 2 corpora) | 2–4 hours |
 | Exp 2 | < 5 minutes (reads cache only) |
 | Exp 3 | 30–60 minutes (entropy forward passes) |
+| Exp 4 | < 10 minutes (reads Exp 1 cache only) |
 
 With a GPU these times drop by roughly 10–20×.

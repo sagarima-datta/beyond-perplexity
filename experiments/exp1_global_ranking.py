@@ -2,9 +2,10 @@
 Experiment 1: Global score comparison and ranking.
 
 Produces:
-  results/exp1_scores.csv       — per-(model, corpus) mean scores for all 5 rules
+  results/exp1_scores.csv       — per-(model, corpus) mean scores for reported rules
   results/exp1_rankings.csv     — model rank (1=best) under each rule
   results/exp1_kendall_tau.csv  — pairwise Kendall τ between rules at token level
+  results/exp1_kendall_tau_matrix_<corpus>.png — lower-triangular tau matrix
   results/exp1_token_scores/    — per-token score arrays (for downstream experiments)
 """
 
@@ -20,6 +21,9 @@ import json
 import numpy as np
 import pandas as pd
 import torch
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from scipy.stats import kendalltau
 from tqdm import tqdm
 
@@ -40,7 +44,16 @@ from scoring.rules import (
 )
 
 RULE_NAMES = ["log", "quadratic", "crps", "energy", "kernel"]
+REPORT_RULE_NAMES = [r for r in RULE_NAMES if r != "crps"]
+RULE_LABELS = {
+    "log":       "Log",
+    "quadratic": "Quadratic",
+    "energy":    "Energy",
+    "kernel":    "Kernel",
+}
 TOKEN_SCORE_DIR = os.path.join(RESULTS_DIR, "exp1_token_scores")
+TAU_SAMPLE = 10_000
+SEED = 591
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -118,6 +131,59 @@ def evaluate(model, tokenizer, embeddings, texts,
     return {r: np.concatenate(v) for r, v in all_scores.items() if v}
 
 
+def plot_kendall_matrix(corpus_name, df_tau):
+    """Save a lower-triangular Kendall tau matrix for reported rules."""
+    labels = [RULE_LABELS[r] for r in REPORT_RULE_NAMES]
+    tau_mat = pd.DataFrame(
+        np.eye(len(REPORT_RULE_NAMES)),
+        index=REPORT_RULE_NAMES,
+        columns=REPORT_RULE_NAMES,
+        dtype=float,
+    )
+
+    sub = df_tau[df_tau["corpus"] == corpus_name]
+    for _, row in sub.iterrows():
+        r1, r2 = row["rule_1"], row["rule_2"]
+        if r1 in tau_mat.index and r2 in tau_mat.columns:
+            tau_mat.loc[r1, r2] = row["kendall_tau"]
+            tau_mat.loc[r2, r1] = row["kendall_tau"]
+
+    display_mat = tau_mat.copy()
+    display_mat.index = labels
+    display_mat.columns = labels
+    lower_mat = display_mat.mask(np.triu(np.ones_like(display_mat, dtype=bool), k=1))
+
+    csv_path = os.path.join(RESULTS_DIR, f"exp1_kendall_tau_matrix_{corpus_name}.csv")
+    lower_mat.to_csv(csv_path)
+
+    masked = np.ma.array(display_mat.values,
+                         mask=np.triu(np.ones_like(display_mat, dtype=bool), k=1))
+    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    im = ax.imshow(masked, vmin=-1, vmax=1, cmap="coolwarm")
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Kendall's tau")
+
+    ax.set_xticks(np.arange(len(labels)))
+    ax.set_yticks(np.arange(len(labels)))
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_yticklabels(labels)
+    ax.set_title(f"Per-token Kendall's tau between scoring rules [{corpus_name}]")
+
+    for i in range(len(labels)):
+        for j in range(i + 1):
+            ax.text(j, i, f"{display_mat.values[i, j]:.3f}",
+                    ha="center", va="center", fontsize=9, color="black")
+
+    ax.set_xlim(-0.5, len(labels) - 0.5)
+    ax.set_ylim(len(labels) - 0.5, -0.5)
+    plt.tight_layout()
+
+    png_path = os.path.join(RESULTS_DIR, f"exp1_kendall_tau_matrix_{corpus_name}.png")
+    fig.savefig(png_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved Kendall tau matrix: {png_path}")
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -185,7 +251,8 @@ def main():
             }
             n_tok = len(next(iter(scores.values())))
             print(f"  Evaluated {n_tok} token positions.")
-            for r, m in mean_scores[(model_name, corpus_name)].items():
+            for r in REPORT_RULE_NAMES:
+                m = mean_scores[(model_name, corpus_name)][r]
                 print(f"    {r:12s}: {m:.5f}")
 
         # Free GPU memory before loading next model
@@ -207,7 +274,7 @@ def main():
     ranking_records = []
     for corpus_name in CORPUS_CONFIGS:
         sub = df_scores.xs(corpus_name, level="corpus")
-        for rule in RULE_NAMES:
+        for rule in REPORT_RULE_NAMES:
             ranked = sub[rule].rank().astype(int)
             for model_name in MODEL_CONFIGS:
                 ranking_records.append({
@@ -220,6 +287,7 @@ def main():
 
     # Table 3: pairwise Kendall τ between rules (pooled over all token positions)
     tau_records = []
+    rng = np.random.default_rng(SEED)
     for corpus_name in CORPUS_CONFIGS:
         # Load all token score arrays for this corpus
         token_arrays = {}
@@ -235,13 +303,13 @@ def main():
         # Concatenate across models (compare rule behavior at token level)
         pooled = {r: np.concatenate(v) for r, v in token_arrays.items() if v}
 
-        for i, r1 in enumerate(RULE_NAMES):
-            for r2 in RULE_NAMES[i+1:]:
+        for i, r1 in enumerate(REPORT_RULE_NAMES):
+            for r2 in REPORT_RULE_NAMES[i+1:]:
                 if r1 not in pooled or r2 not in pooled:
                     continue
                 # Subsample for speed (Kendall τ is O(n log n))
-                n = min(len(pooled[r1]), 10_000)
-                idx = np.random.choice(len(pooled[r1]), n, replace=False)
+                n = min(len(pooled[r1]), TAU_SAMPLE)
+                idx = rng.choice(len(pooled[r1]), n, replace=False)
                 tau, pval = kendalltau(pooled[r1][idx], pooled[r2][idx])
                 tau_records.append({
                     "corpus": corpus_name,
@@ -251,18 +319,22 @@ def main():
                 })
 
     df_tau = pd.DataFrame(tau_records)
+    df_scores_report = df_scores[REPORT_RULE_NAMES]
 
     # ── Save ─────────────────────────────────────────────────────────────────
-    df_scores.to_csv(os.path.join(RESULTS_DIR, "exp1_scores.csv"))
+    df_scores_report.to_csv(os.path.join(RESULTS_DIR, "exp1_scores.csv"))
     df_rankings.to_csv(os.path.join(RESULTS_DIR, "exp1_rankings.csv"), index=False)
     df_tau.to_csv(os.path.join(RESULTS_DIR, "exp1_kendall_tau.csv"), index=False)
+
+    for corpus_name in CORPUS_CONFIGS:
+        plot_kendall_matrix(corpus_name, df_tau)
 
     # ── Print summary ─────────────────────────────────────────────────────────
     print("\n" + "="*60)
     print("EXPERIMENT 1 RESULTS")
     print("="*60)
     print("\nMean scores (lower = better):")
-    print(df_scores.to_string())
+    print(df_scores_report.to_string())
     print("\nModel rankings by rule (1 = best):")
     pivot = df_rankings.pivot_table(
         index=["corpus", "rule"], columns="model", values="rank", aggfunc="first")

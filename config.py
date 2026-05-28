@@ -28,12 +28,15 @@ CORPUS_CONFIGS = {
 }
 
 # ── evaluation ────────────────────────────────────────────────────────────────
-MAX_TOKENS      = 2_000 if SAMPLE_MODE else 5_000   # set 50_000 for full paper run
+MAX_TOKENS      = 2_000 if SAMPLE_MODE else 20_000  # larger final run
 MAX_SEQ_LEN     = 128 if SAMPLE_MODE else 512
 DEVICE          = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── scoring ───────────────────────────────────────────────────────────────────
-MC_SAMPLES          = 200    # Monte Carlo draws for energy / kernel expectations
+# For larger runs, increase MAX_TOKENS before increasing MC_SAMPLES.  The
+# default 200 draws is a reasonable runtime/variance tradeoff; use 500 only for
+# a final sensitivity run if energy/kernel rankings look unstable.
+MC_SAMPLES          = 200    # Monte Carlo draws for CRPS / energy / kernel expectations
 KERNEL_N_SUBSAMPLE  = 2_000  # random embedding pairs used for median-heuristic σ
 
 RESULTS_DIR = "results_sample" if SAMPLE_MODE else "results"

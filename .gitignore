@@ -18,7 +18,6 @@ env/
 results_sample/
 
 # Results from experiments that no longer exist (kept out of tree)
-results/exp4_*
 results/exp5_*
 results/exp6_*
 results/exp7_*
