@@ -1,0 +1,21 @@
+start
+torch 2.12.0+cpu
+transformers imported
+gpt2 tokenizer
+bert tokenizer
+bert embeddings (30522, 768)
+  batch at 0  (0.0s)
+  batch at 5120  (0.2s)
+  batch at 10240  (0.5s)
+  batch at 15360  (0.7s)
+  batch at 20480  (1.0s)
+  batch at 25600  (1.3s)
+  batch at 30720  (1.6s)
+  batch at 35840  (1.8s)
+  batch at 40960  (2.1s)
+  batch at 46080  (2.3s)
+built (50257, 768) in 2.5s
+cos(cat,dog)        = 0.548
+cos(cat,carburetor) = 0.477
+saved cache
+VERIFIED
