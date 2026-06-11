@@ -17,10 +17,11 @@ env/
 # Sample-mode results — development artifact, not part of the paper
 results_sample/
 
-# Results from experiments that no longer exist (kept out of tree)
-results/exp5_*
-results/exp6_*
-results/exp7_*
+# LaTeX build artifacts
+report/*.aux
+report/*.log
+report/*.out
+report/*.synctex.gz
 
 # OS artefacts
 .DS_Store

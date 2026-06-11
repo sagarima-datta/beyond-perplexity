@@ -52,10 +52,9 @@ Outputs
                                    log_score
   results/exp5_summary.csv       mean centroid_dist / top1_dist on wrong positions,
                                  per (model, corpus)
-  results/exp5_<corpus>.png      3-panel figure per corpus:
+  results/exp5_<corpus>.png      2-panel figure per corpus:
                                    (a) violin of centroid_dist on wrong positions
                                    (b) CDF of centroid_dist on wrong positions
-                                   (c) scatter: centroid_dist vs log_score (sample)
 """
 
 import os, sys
@@ -84,7 +83,6 @@ from utils.data import load_corpus
 
 OUTPUT_DIR  = os.path.join(RESULTS_DIR, "exp5_centroid")
 SEED        = 591
-SCATTER_N   = 2_000    # points shown per model in the scatter panel
 DISPERSION_SAMPLES = 200   # MC draws for dispersion estimate
 
 MODEL_COLORS = {
@@ -194,17 +192,15 @@ def evaluate_centroid(model, tokenizer, embeddings, texts,
 
 def plot_corpus(corpus_name, per_model_data, out_path):
     """
-    3-panel figure:
+    2-panel figure:
       (a) Violin of centroid_dist on wrong positions across models
       (b) CDF of centroid_dist on wrong positions
-      (c) Scatter: centroid_dist vs log_score (sample of SCATTER_N points each)
     """
-    rng     = np.random.default_rng(SEED)
     models  = list(per_model_data.keys())
     colors  = [MODEL_COLORS[m] for m in models]
     labels  = [MODEL_LABELS[m] for m in models]
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.6))
     fig.suptitle(
         f"OPT Energy Advantage — Centroid Analysis  [{corpus_name}]",
         fontsize=13, fontweight="bold",
@@ -250,70 +246,6 @@ def plot_corpus(corpus_name, per_model_data, out_path):
     ax.set_title("(b) CDF on wrong positions")
     ax.legend(fontsize=9)
     ax.axvline(0, color="gray", linewidth=0.5, linestyle=":")
-
-    # ── Panel (c): Scatter centroid_dist vs log_score ────────────────────────
-    ax = axes[2]
-    for m, col, lbl in zip(models, colors, labels):
-        d  = per_model_data[m]
-        # subsample wrong positions only for readability
-        idx_wrong = np.where(d["wrong"])[0]
-        n   = min(SCATTER_N, len(idx_wrong))
-        idx = rng.choice(idx_wrong, n, replace=False)
-        ax.scatter(d["centroid_dist"][idx], d["log_score"][idx],
-                   color=col, alpha=0.25, s=6, label=lbl)
-    ax.set_xlabel("Centroid distance")
-    ax.set_ylabel("Log-score  (−log p(y))")
-    ax.set_title("(c) Centroid dist vs log-score\n(wrong positions only)")
-    ax.legend(fontsize=9, markerscale=3)
-
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"  Saved figure: {out_path}")
-
-
-def plot_mechanism(corpus_name, per_model_data, out_path):
-    """
-    Mechanism diagnostic figure:
-      2-panel: centroid_dist vs dispersion scatter (all positions) per model,
-    showing whether the distribution is tightly peaked near truth (low centroid,
-    low dispersion) or broad but centred near truth (low centroid, high dispersion).
-    """
-    rng    = np.random.default_rng(SEED + 1)
-    models = list(per_model_data.keys())
-    colors = [MODEL_COLORS[m] for m in models]
-    labels = [MODEL_LABELS[m] for m in models]
-
-    fig, axes = plt.subplots(1, len(models), figsize=(5 * len(models), 4.5), sharey=True)
-    fig.suptitle(
-        f"Centroid Distance vs Dispersion  [{corpus_name}]",
-        fontsize=12, fontweight="bold",
-    )
-
-    for ax, m, col, lbl in zip(axes, models, colors, labels):
-        d = per_model_data[m]
-        wrong = d["wrong"]
-        # subsample
-        idx   = rng.choice(len(d["centroid_dist"]), min(2000, len(d["centroid_dist"])),
-                            replace=False)
-        sc = ax.scatter(
-            d["dispersion"][idx],
-            d["centroid_dist"][idx],
-            c=[col if wrong[i] else "#cccccc" for i in idx],
-            alpha=0.3, s=5,
-        )
-        ax.set_xlabel("Dispersion  ½·E[‖X−X'‖]")
-        ax.set_title(lbl)
-    axes[0].set_ylabel("Centroid distance  ‖ E[e(X)] − e(y) ‖")
-
-    # legend patches
-    from matplotlib.patches import Patch
-    legend_elems = [
-        Patch(facecolor="#888888", alpha=0.5, label="correct (top-1 = true)"),
-        Patch(facecolor="#dd4444", alpha=0.5, label="wrong (top-1 ≠ true)"),
-    ]
-    fig.legend(handles=legend_elems, loc="lower center", ncol=2, fontsize=9,
-               bbox_to_anchor=(0.5, -0.04))
 
     plt.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -429,36 +361,19 @@ def main():
             corpus_name, per_model,
             os.path.join(RESULTS_DIR, f"exp5_{corpus_name}.png"),
         )
-        plot_mechanism(
-            corpus_name, per_model,
-            os.path.join(RESULTS_DIR, f"exp5_{corpus_name}_mechanism.png"),
-        )
 
     # ── Narrative interpretation ─────────────────────────────────────────────
     print("\n" + "="*60)
     print("INTERPRETATION GUIDE")
     print("="*60)
     print("""
-Panel (a) / summary table — centroid_dist on wrong positions:
-  IF OPT centroid_dist << GPT-2 centroid_dist
-    → Hypothesis CONFIRMED: OPT spreads mass near the true token even
-      when its argmax is wrong.  Energy rewards this; log-score does not.
-
-  IF centroid_dist ≈ equal across models
-    → The advantage is NOT about where the mass sits, but about the
-      geometry of OPT's embedding space itself (proceed to Exp 7 / shared-
-      embedding check).
-
-Panel (c) — scatter centroid_dist vs log_score:
-  For OPT you expect a NEGATIVE correlation on wrong positions: high log-score
-  errors (model very unsure about true token) go with LOW centroid_dist
-  (mass still near truth).  For GPT-2 this correlation should be weaker or
-  absent.
-
-Panel (mechanism) — centroid_dist vs dispersion:
-  Low centroid, high dispersion → broad but centred distribution  (Mechanism A)
-  Low centroid, low dispersion  → peaked near correct token       (Mechanism B)
-  High centroid, any dispersion → mass pointing away from truth
+Violin / CDF — centroid_dist on wrong positions:
+  IF OPT centroid_dist << GPT-2 centroid_dist (raw)
+    → OPT's mass sits closer to the truth in ABSOLUTE units — but distances
+      live in each model's own embedding space.  Normalise by each model's
+      median pairwise vocab distance before drawing semantic conclusions:
+      a globally tighter space shrinks every distance regardless of where
+      the mass actually goes.
 """)
 
     print(f"\nAll outputs written to  {RESULTS_DIR}/")

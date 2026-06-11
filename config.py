@@ -28,7 +28,7 @@ CORPUS_CONFIGS = {
 }
 
 # ── evaluation ────────────────────────────────────────────────────────────────
-MAX_TOKENS      = 2_000 if SAMPLE_MODE else 20_000  # larger final run
+MAX_TOKENS      = 2_000 if SAMPLE_MODE else 20_000  # 20 000 = setting used in the paper
 MAX_SEQ_LEN     = 128 if SAMPLE_MODE else 512
 DEVICE          = "cuda" if torch.cuda.is_available() else "cpu"
 
