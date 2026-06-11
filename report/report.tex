@@ -68,7 +68,7 @@
   quantity the energy divergence is constructed to measure. Together, the experiments
   constitute an empirical verification of the Bregman account of scoring-rule
   disagreement and motivate reporting complementary proper scoring rules alongside
-  perplexity.
+  perplexity. Code: \url{https://github.com/sagarima-datta/beyond-perplexity}.
 \end{abstract}
 
 \section{Introduction}
@@ -300,7 +300,7 @@ WikiText-103) while the same model is ranked last by every other rule.
   \label{fig:exp1tau}
 \end{figure}
 
-\paragraph{Reading the result through the Bregman representation.} By
+By
 Equation~\eqref{eq:bregman}, each column of Table~\ref{tab:exp1} estimates the mean
 Bregman divergence $d_{\varphi}(\delta_y, P_t)$ between the realized outcomes and the
 models' forecasts under that rule's generator. The disagreement between columns is
@@ -334,7 +334,7 @@ quadratic score, $1.58$ for the energy score, and $1.71$ for the kernel score
   \label{fig:exp2}
 \end{figure}
 
-\paragraph{Reading the result through the Bregman representation.} The ordering of these
+The ordering of these
 amplification factors is determined by the boundary behavior of the generators in
 Table~\ref{tab:generators}. For the log-score, $d_\varphi(\delta_y, P) = -\log p_y$, and
 the curvature $1/p_v$ of the negative-entropy generator diverges as $p_y \to 0$; since
@@ -370,7 +370,7 @@ is the ratio between rules: $\Elog / \Eenergy$ rises from $2.58$ in the low tert
 $3.79$ in the high tertile, an increase of $47\%$ ($29\%$ on PTB;
 Appendix~\ref{app:entropy}).
 
-\paragraph{Reading the result through the Bregman representation.} The widening ratio is
+The widening ratio is
 a direct manifestation of locality. For the log-score,
 $d_{\mathrm{KL}}(\delta_y, P) = -\log p_y$ depends on the forecast only through the mass
 assigned to the realized token; a high-entropy forecast necessarily assigns smaller
@@ -410,7 +410,7 @@ obtains in $100\%$ of replicates on both corpora. Third, the energy ranking agre
 the log-score ranking in $0\%$ of replicates, the kernel in $100\%$ (quadratic: $80\%$
 on WikiText-103, $100\%$ on PTB).
 
-\paragraph{Reading the result through the Bregman representation.} Strict properness
+Strict properness
 guarantees that each empirical rule mean is a consistent estimator of the corresponding
 expected Bregman divergence; the bootstrap addresses the remaining question of whether
 the \emph{orderings} of those divergences are estimated stably at $n = 20{,}000$. The
@@ -455,7 +455,7 @@ GPT-2 (PTB: $1.49$, $2.34$, $2.69$)---exactly the energy-score ordering of
 Table~\ref{tab:exp1}, on both corpora; the same ordering holds for the distance from the
 modal (top-1) token to the target (Appendix~\ref{app:exp5}).
 
-\paragraph{Reading the result through the Bregman representation.} Experiment 5 closes
+Experiment 5 closes
 the explanatory chain opened by Experiment 1. The energy generator's divergence is small
 exactly when the forecast's mass configuration sits near the target in feature space;
 the barycenter distance isolates that quantity event by event, and the model ordering it
