@@ -19,9 +19,9 @@ Hypothesis (Gneiting & Raftery 2007 + proposal):
 
 Outputs
 -------
-  results/exp3_entropy_bins.csv         — mean score per (model, corpus, bin, rule)
+  results/exp3_entropy_bins.csv         — mean score per reported (model, corpus, bin, rule)
   results/exp3_ratio.csv                — log/energy and log/kernel ratios per bin
-  results/exp3_<corpus>.png             — 6-panel figure per corpus
+  results/exp3_<corpus>.png             — relative-score figure per corpus
   results/exp1_token_scores/<m>__<c>__entropy.npy   — entropy cache (nats)
 """
 
@@ -49,6 +49,7 @@ from utils.models import load_model_and_tokenizer
 
 TOKEN_SCORE_DIR = os.path.join(RESULTS_DIR, "exp1_token_scores")
 RULE_NAMES      = ["log", "quadratic", "crps", "energy", "kernel"]
+REPORT_RULE_NAMES = [r for r in RULE_NAMES if r != "crps"]
 BIN_LABELS      = ["low", "medium", "high"]
 
 MODEL_COLORS = {
@@ -132,7 +133,7 @@ def plot_corpus(corpus_name, df_bins, model_names):
         "kernel":    ((0,(3,1,1,1)), "v", "#984ea3"),
     }
 
-    for rule in RULE_NAMES:
+    for rule in REPORT_RULE_NAMES:
         mean_per_bin = (
             sub[sub["rule"] == rule]
             .groupby("bin")["mean_score"]
@@ -252,7 +253,7 @@ def main():
                 m = bin_labels == b
                 print(f"    [{b:6s}] "
                       + "  ".join(f"{r}={scores[r][m].mean():.4f}"
-                                  for r in RULE_NAMES))
+                                  for r in REPORT_RULE_NAMES))
 
         if model is not None:
             del model
@@ -263,7 +264,7 @@ def main():
     df_wide = pd.DataFrame(bin_records)
     # Melt into long format (model, corpus, bin, rule, mean_score)
     id_cols   = ["model", "corpus", "bin", "n_tokens"]
-    value_cols = [f"mean_{r}" for r in RULE_NAMES]
+    value_cols = [f"mean_{r}" for r in REPORT_RULE_NAMES]
     df_long = df_wide.melt(id_vars=id_cols, value_vars=value_cols,
                            var_name="rule", value_name="mean_score")
     df_long["rule"] = df_long["rule"].str.replace("mean_", "")
@@ -278,7 +279,7 @@ def main():
     for corpus_name in CORPUS_CONFIGS:
         sub = df_long[df_long["corpus"] == corpus_name]
         print(f"\n  {corpus_name}:")
-        for rule in RULE_NAMES:
+        for rule in REPORT_RULE_NAMES:
             grp = (sub[sub["rule"] == rule]
                    .groupby("bin")["mean_score"]
                    .mean()

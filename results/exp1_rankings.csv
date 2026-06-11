@@ -5,9 +5,6 @@ wikitext103,log,opt-125m,3
 wikitext103,quadratic,gpt2,3
 wikitext103,quadratic,gpt2-medium,1
 wikitext103,quadratic,opt-125m,2
-wikitext103,crps,gpt2,3
-wikitext103,crps,gpt2-medium,1
-wikitext103,crps,opt-125m,2
 wikitext103,energy,gpt2,3
 wikitext103,energy,gpt2-medium,2
 wikitext103,energy,opt-125m,1
@@ -20,9 +17,6 @@ ptb,log,opt-125m,3
 ptb,quadratic,gpt2,2
 ptb,quadratic,gpt2-medium,1
 ptb,quadratic,opt-125m,3
-ptb,crps,gpt2,2
-ptb,crps,gpt2-medium,1
-ptb,crps,opt-125m,3
 ptb,energy,gpt2,3
 ptb,energy,gpt2-medium,2
 ptb,energy,opt-125m,1

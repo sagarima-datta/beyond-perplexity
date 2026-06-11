@@ -1,0 +1,3 @@
+corpus,model,p_opt_best_energy,p_opt_worst_log,p_best_energy_and_worst_log
+ptb,opt-125m,1.0,0.987,0.987
+wikitext103,opt-125m,1.0,0.987,0.987
