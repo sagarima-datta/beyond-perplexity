@@ -2,9 +2,9 @@ corpus,rule,model,rank
 wikitext103,log,gpt2,2
 wikitext103,log,gpt2-medium,1
 wikitext103,log,opt-125m,3
-wikitext103,quadratic,gpt2,2
+wikitext103,quadratic,gpt2,3
 wikitext103,quadratic,gpt2-medium,1
-wikitext103,quadratic,opt-125m,3
+wikitext103,quadratic,opt-125m,2
 wikitext103,energy,gpt2,3
 wikitext103,energy,gpt2-medium,2
 wikitext103,energy,opt-125m,1

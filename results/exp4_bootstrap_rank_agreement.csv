@@ -1,9 +1,9 @@
 corpus,rule,label,p_rank_matches_log
 ptb,energy,Energy,0.0
-ptb,kernel,Kernel,1.0
+ptb,kernel,Kernel,0.987
 ptb,log,Log,1.0
-ptb,quadratic,Quadratic,1.0
+ptb,quadratic,Quadratic,0.972
 wikitext103,energy,Energy,0.0
-wikitext103,kernel,Kernel,1.0
+wikitext103,kernel,Kernel,0.987
 wikitext103,log,Log,1.0
-wikitext103,quadratic,Quadratic,0.8
+wikitext103,quadratic,Quadratic,0.489
